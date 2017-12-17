@@ -1,0 +1,226 @@
+---
+title: "Twitter_Unitedairlines_Project"
+author: "Luna Yihe Tang"
+date: "December 15, 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Background
+After the release of a video showing a man was beaten and dragged out of an overbooked United flight on April 11, 2017, there is a rising attention on the passengers and airline companies conflict. In this project, I will use twitter data to find out how people react to this horrendous event,and how big the impact of traditional media and social media is on the change of United Airline's public image. Is there any solution to prevent this tragedy from happening again? 
+#Set up Twitter
+```{r}
+library(reshape)
+library(devtools)
+library(twitteR)
+library(tm)
+library(stringr)
+library(wordcloud)
+library(tidytext)
+library(tidyverse)
+library(streamR)
+library(ROAuth)
+library(reshape)
+library(dplyr)
+library(ggplot2)
+library(splitstackshape)
+library(plotly)
+library(grid) 
+library(lubridate)
+```
+#Set up API keys
+```{r}
+api_key <- 	"YoW4HZnUTqPcyThkKg5QAx9Jc"
+api_secret <- "JJElpamd4MeCg8k6Nn5VnYNjvOS1aE1CfNBl1vcv8j8eXPaYpI"
+access_token <- "3013919662-fhYkpmLkYA6apPlOEsOUI5h9nvuc4uAn0Y8xh5S"
+access_token_secret <- "Maq3qOPWAxvfuGC59wNGjvN9gWVbXTPNKEXMKhm8MYYz1"
+setup_twitter_oauth(api_key, api_secret, access_token, access_token_secret)
+```
+#Get data using twitter
+```{r}
+#Getting tweets for the past two years about United Airlines before the violent video was released
+tweets1 <- searchTwitter("unitedairlines", n=8000, lang="en", since="2015-04-01", until='2017-4-10')
+#Got 0 result, which means before the video was release, people rarely tweet about United Airlines. 
+
+#Getting tweets about United Airlines after the violent video was released
+tweets2 <- searchTwitter("unitedairlines", n=2000, lang="en", since="2015-04-01")
+#Got 846 results, which means people started talking about United Airlines more after the release of the video.
+
+# Transform tweets list into a data frame
+tweets.df <- twListToDF(tweets2)
+
+
+##data cleaning
+
+tweets.df$text<-iconv(tweets.df$text, from = "latin1", to = "ASCII", sub="")
+
+#Save twitter data as csv
+write.csv(tweets.df,"tidy_tweetsdf.csv")
+```
+#Word Cloud
+```{r}
+wordCorpus <- Corpus(VectorSource(str_replace_all(tweets.df$text, "@", "")))
+wordCorpus <- tm_map(wordCorpus, removePunctuation)
+wordCorpus <- tm_map(wordCorpus, content_transformer(tolower))
+wordCorpus <- tm_map(wordCorpus, removeWords, stopwords("english"))
+wordCorpus <- tm_map(wordCorpus, removeWords, c("united","airlines"))
+wordCorpus <- tm_map(wordCorpus, stripWhitespace)
+saveRDS(tweets.df, file="tweets.df.rds")
+
+wc<-TermDocumentMatrix(wordCorpus)
+wc<- as.matrix(wc)
+wc<- sort(rowSums(wc),decreasing=TRUE)
+wc<- data.frame(word = names(wc),freq=wc)
+set.seed(1234)
+wordcloud(words = wc$word, freq = wc$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+
+```
+From the word cloud we can see some negative words appears,like outrageous, terrible, monstrous, wait, lines, shooting, delay, etc. 
+```{r}
+#How many tweets about United by dates?
+tweets.df$date<-lubridate::date(tweets.df$created)
+dayflowchart<-tweets.df%>%
+  group_by(date)%>%
+  summarise(numberoftweets=n())
+ggplot(data=dayflowchart, aes(x=date, y=numberoftweets, group=1)) + 
+    geom_line(colour="red", linetype="dashed", size=1.5) + 
+    geom_point(colour="red", size=4, shape=21, fill="white")
+
+
+```
+After extracting dates from the column "created", we can see the number of tweets about United reached its peak on Dec 9, which is a Saturday. I think that might because people have more free time to tweet on weekends. 
+```{r}
+#Word Count Graph
+
+#1.tokensize
+tidy_tweets <- tweets.df %>% 
+  unnest_tokens(word,text)
+#2.remove stop words
+data(stop_words)
+tidy_tweets <-  tidy_tweets %>% 
+  anti_join(stop_words)
+#3.word frequency graph
+tidy_tweets %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 50) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+```
+Not surprisingly, most frequent words are about flights.
+#Sentiments(Positive and Negative words)
+```{r}
+sentiments
+
+get_sentiments("afinn")
+
+get_sentiments("bing")
+
+get_sentiments("nrc")
+
+tidy_tweetscsv<-read.csv("tidy_tweetsdf.csv",stringsAsFactors = FALSE)
+#nrc
+tweets_text<-tidy_tweetscsv$text
+tweets_text<-data_frame(line=1:860, text=tweets_text)
+tweets_text<-tweets_text%>%unnest_tokens(word, text)
+tweets_text<-tweets_text%>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+tweets_text%>%
+  group_by(sentiment) %>%
+  top_n(12) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Sentiment Categories",
+       x = NULL) +
+  coord_flip()
+```
+From the graphs we can see, the Airline name "United" was mistakingly read as word related to "trust" and "positive" by R, which we should discard it. There are a lot of words in "fear", but the word "change" should not be read as a word related to fear. I think it's just indicating "change of flight". 
+```{r}
+#bing
+tweets_text<-tidy_tweetscsv$text
+tweets_text<-data_frame(line=1:860, text=tweets_text)
+tweets_text<-tweets_text%>%unnest_tokens(word, text)
+tweets_text<-tweets_text%>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+tweets_text%>%
+  group_by(sentiment) %>%
+  top_n(12) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Positive and Negative words",
+       x = NULL) +
+  coord_flip()
+```
+There are more negative than positive words mentioned in tweets about United Airlines, which means the video is hurting United's public image, and there are things need to be improved regarding United's service. Words like outrageous, monstrous, and worst appeared a lot. 
+#Timeline
+```{r}
+tl<-userTimeline("United",n=400)
+tl<-twListToDF(tl)
+tl$text<-iconv(tl$text, from = "latin1", to = "ASCII", sub="")
+tl$text<-gsub('http\\S+\\s*', '', tl$text)
+
+tl<-read.csv("tidy_tweetsdf.csv")
+tlgra <- plot_ly(tl, x = ~created, y = ~favoriteCount, name="Favorite", type = 'scatter', mode = 'lines', line=list(color="red")) %>% add_trace(y=~retweetCount, name="Retweet", type = 'scatter', mode = 'lines', line=list(color="blue")) %>%  layout(
+                  title = 'Favorites/Retweets of United', xaxis = list(title = 'Date'), 
+                  yaxis=list(title='Number of favorites/retweets'))
+
+tlgra
+```
+From the graph we can see, there are more retweets and favorate tweets. Number of retweets reached peak at 2017-12-09, 4:59 and 2-17-12-10, 23:40. 
+#Where do users tweeting about United Airines now?
+```{r}
+load("/Users/Luna/Desktop/my_oauth.Rdata")
+filterStream("unitedmap.json", 
+             track=c("unitedairlines"), 
+             locations = c(-125, 25, -66,50), 
+             timeout=100, oauth=my_oauth)
+netmap<-parseTweets("unitedmap.json", verbose = TRUE)
+ck1 <- sum(netmap$lat>0, na.rm = TRUE)
+ck2 <- sum(netmap$place_lat>0, na.rm = TRUE)
+ck3 <- sum(!is.na(netmap$location))
+map.data <- map_data("state")   
+netpoints <- data.frame(x = as.numeric(netmap$lon),  
+                       y = as.numeric(netmap$lat))
+netpoints <- netpoints[netpoints$y > 25, ]  
+netpoints<-filter(netpoints,y>19&y<65,x>(-161.7)&x<(-68.01))
+ggplot(map.data) + 
+  geom_map(aes(map_id = region),  
+           map = map.data,  
+           fill = "white",             
+           color = "grey20", size = 0.25) + 
+  expand_limits(x = map.data$long, y = map.data$lat) +            
+  theme(axis.line = element_blank(),  
+        axis.text = element_blank(),  
+        axis.ticks = element_blank(),                     
+        axis.title = element_blank(),  
+        panel.background = element_blank(),  
+        panel.border = element_blank(),                     
+        panel.grid.major = element_blank(), 
+        plot.background = element_blank(),                     
+        plot.margin = unit(0 * c( -1.5, -1.5, -1.5, -1.5), "lines")) +  
+        geom_point(data = netpoints,             
+        aes(x = x, y = y), size = 1,  
+        alpha = 1/5, color = "blue") 
+```
+According to the map, most of the tweets are from East Coast and California, where the most population live at. 
